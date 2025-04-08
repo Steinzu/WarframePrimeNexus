@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 
 class WarframeDataParser {
     constructor() {
@@ -42,8 +43,11 @@ class WarframeDataParser {
     handlePrimeSection(line) {
         if (this.currentSection !== 'primes') return false;
 
+        // Handle main prime item line
         if (line.startsWith('- ') && !line.includes('->')) {
-            const primeName = line.substring(2);
+            const primeName = line.substring(2).trim();
+            if (!primeName) return false;
+            
             this.currentItem = primeName;
             this.primes.set(primeName, {
                 name: primeName,
@@ -52,10 +56,16 @@ class WarframeDataParser {
             return true;
         }
 
-        if ((line.startsWith('  - ') || (line.startsWith('- ') && line.includes('->'))) && this.currentItem) {
-            const partInfo = this.parsePartInfo(line);
-            this.primes.get(this.currentItem).parts.push(partInfo);
-            return true;
+        // Handle part line
+        if (this.currentItem && (line.startsWith('  - ') || (line.startsWith('- ') && line.includes('->')))) {
+            try {
+                const partInfo = this.parsePartInfo(line);
+                this.primes.get(this.currentItem).parts.push(partInfo);
+                return true;
+            } catch (error) {
+                console.warn(`Warning: Couldn't parse part info in line: ${line}`);
+                return false;
+            }
         }
 
         return false;
@@ -64,8 +74,11 @@ class WarframeDataParser {
     handleRelicSection(line) {
         if (this.currentSection !== 'relics') return false;
 
+        // Handle relic header
         if (line.startsWith('## ')) {
-            const relicName = line.substring(3);
+            const relicName = line.substring(3).trim();
+            if (!relicName) return false;
+            
             this.currentItem = relicName;
             this.relics.set(relicName, {
                 location: '',
@@ -74,15 +87,25 @@ class WarframeDataParser {
             return true;
         }
 
-        if (line.startsWith('**Location**:') && this.currentItem) {
-            this.relics.get(this.currentItem).location = line.split(':')[1].trim();
+        if (!this.currentItem) return false;
+
+        // Handle location line
+        if (line.startsWith('**Location**:')) {
+            const location = line.split(':').slice(1).join(':').trim();
+            this.relics.get(this.currentItem).location = location;
             return true;
         }
 
-        if (line.startsWith('- ') && this.currentItem) {
-            const reward = this.parseRewardInfo(line);
-            this.relics.get(this.currentItem).rewards.push(reward);
-            return true;
+        // Handle reward line
+        if (line.startsWith('- ')) {
+            try {
+                const reward = this.parseRewardInfo(line);
+                this.relics.get(this.currentItem).rewards.push(reward);
+                return true;
+            } catch (error) {
+                console.warn(`Warning: Couldn't parse reward in line: ${line}`);
+                return false;
+            }
         }
 
         return false;
@@ -90,29 +113,48 @@ class WarframeDataParser {
 
     parsePartInfo(line) {
         const partLine = line.replace(/^[- ]+/, '');
-        const [partInfo, relicInfo] = partLine.split('->').map(s => s.trim());
+        const parts = partLine.split('->').map(s => s.trim());
+        
+        if (parts.length < 2) {
+            throw new Error(`Invalid part format: ${line}`);
+        }
+        
+        const [partInfo, relicInfo] = parts;
         const [part, rarity] = this.parsePartAndRarity(partInfo);
 
         return {
-            part,
-            rarity,
-            relic: relicInfo
+            part: part || '',
+            rarity: rarity || '',
+            relic: relicInfo || ''
         };
     }
 
     parseRewardInfo(line) {
-        const rewardLine = line.substring(2);
+        const rewardLine = line.substring(2).trim();
+        if (!rewardLine) {
+            throw new Error(`Empty reward line: ${line}`);
+        }
+        
         const [part, rarity] = this.parsePartAndRarity(rewardLine);
 
         return {
-            part,
-            rarity
+            part: part || '',
+            rarity: rarity || ''
         };
     }
 
     parsePartAndRarity(info) {
-        const [part, rarityWithParen] = info.split('(').map(s => s.trim());
-        const rarity = rarityWithParen ? rarityWithParen.replace(')', '') : '';
+        if (!info) return ['', ''];
+        
+        const rarityMatch = info.match(/\(([^)]+)\)$/);
+        let part = info;
+        let rarity = '';
+        
+        if (rarityMatch) {
+            rarity = rarityMatch[1].trim();
+            part = info.substring(0, rarityMatch.index).trim();
+        }
+        
         return [part, rarity];
     }
 }
@@ -144,8 +186,11 @@ class HTMLGenerator {
         const separated = { warframes: {}, weapons: {} };
 
         Object.entries(primes).forEach(([name, info]) => {
+            // More robust check for warframes - they typically have Systems, Chassis, and Neuroptics
             const isWarframe = info.parts.some(part => 
-                part.part.includes('Systems')
+                part.part.includes('Systems') || 
+                part.part.includes('Chassis') || 
+                part.part.includes('Neuroptics')
             );
 
             if (isWarframe) {
@@ -387,6 +432,7 @@ class HTMLGenerator {
             overflow-y: auto;
             backdrop-filter: blur(10px);
             animation: popupAppear 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: none;
         }
 
         .category-section {
@@ -426,6 +472,15 @@ class HTMLGenerator {
             opacity: 0.7;
         }
 
+        .no-results {
+            padding: 2rem;
+            text-align: center;
+            font-style: italic;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            margin: 2rem 0;
+        }
+
         @keyframes gridFlow {
             0% { background-position: 0 0; }
             100% { background-position: 1000px 1000px; }
@@ -458,7 +513,9 @@ class HTMLGenerator {
             .prime-header { padding: 1rem; }
             .relic-popup {
                 width: 90%;
-                right: 5%;
+                left: 50%;
+                right: auto;
+                transform: translate(-50%, -50%);
             }
         }
         </style>`;
@@ -499,7 +556,8 @@ class HTMLGenerator {
             data: ${JSON.stringify(data)},
             currentTab: 'primes',
             expandedItems: new Set(),
-            searchTerm: ''
+            searchTerm: '',
+            relicPopupVisible: false
         };
 
         const utils = {
@@ -515,7 +573,12 @@ class HTMLGenerator {
                 return relics.sort((a, b) => {
                     const aTier = a.split(' ')[0];
                     const bTier = b.split(' ')[0];
-                    return tierOrder[aTier] - tierOrder[bTier];
+                    
+                    // Handle cases where the relic format doesn't match expected
+                    const aTierValue = tierOrder[aTier] || 99;
+                    const bTierValue = tierOrder[bTier] || 99;
+                    
+                    return aTierValue - bTierValue || a.localeCompare(b);
                 });
             },
 
@@ -523,44 +586,68 @@ class HTMLGenerator {
                 const grouped = new Map();
                 
                 parts.forEach(part => {
-                    const key = \`\${part.part}|\${part.rarity}\`;
+                    // Skip invalid parts
+                    if (!part.part) return;
+                    
+                    const key = \`\${part.part}|\${part.rarity || ''}\`;
                     if (!grouped.has(key)) {
                         grouped.set(key, {
                             part: part.part,
-                            rarity: part.rarity,
+                            rarity: part.rarity || '',
                             relics: []
                         });
                     }
-                    grouped.get(key).relics.push(part.relic);
+                    
+                    if (part.relic) {
+                        grouped.get(key).relics.push(part.relic);
+                    }
                 });
 
                 return Array.from(grouped.values()).map(group => ({
                     ...group,
-                    relics: this.sortRelics([...new Set(group.relics)])
+                    relics: this.sortRelics([...new Set(group.relics.filter(Boolean))])
                 }));
             },
 
             filterByCategory(items, term, category) {
+                if (!term) {
+                    return Object.entries(items[category] || {});
+                }
+                
                 term = term.toLowerCase();
-                return Object.entries(items[category]).filter(([name, info]) => {
+                return Object.entries(items[category] || {}).filter(([name, info]) => {
                     if (name.toLowerCase().includes(term)) return true;
-                    return info.parts.some(p => 
-                        p.part.toLowerCase().includes(term) || 
+                    return info.parts && info.parts.some(p => 
+                        p.part && p.part.toLowerCase().includes(term) || 
                         (p.relic && p.relic.toLowerCase().includes(term))
                     );
                 });
             },
 
             filterItems(items, term) {
+                if (!term) {
+                    return Object.entries(items || {});
+                }
+                
                 term = term.toLowerCase();
-                return Object.entries(items).filter(([name, info]) => {
+                return Object.entries(items || {}).filter(([name, info]) => {
                     if (name.toLowerCase().includes(term)) return true;
-                    const parts = info.parts || info.rewards;
+                    
+                    const parts = info.parts || info.rewards || [];
                     return parts.some(p => 
-                        p.part.toLowerCase().includes(term) || 
+                        p.part && p.part.toLowerCase().includes(term) || 
                         (p.relic && p.relic.toLowerCase().includes(term))
                     );
                 });
+            },
+            
+            escapeHtml(unsafe) {
+                return unsafe
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
             }
         };
 
@@ -578,33 +665,36 @@ class HTMLGenerator {
                     \`;
                 };
 
-                return \`
+                const content = \`
                     \${renderCategory('warframes', 'Prime Warframes')}
                     \${renderCategory('weapons', 'Prime Weapons')}
                 \`;
+                
+                return content || '<div class="no-results">No primes found matching your search</div>';
             },
 
             renderPrimeItem(name, info) {
-                const groupedParts = utils.groupParts(info.parts);
+                const escapedName = utils.escapeHtml(name);
+                const groupedParts = utils.groupParts(info.parts || []);
                 
                 return \`
                     <div class="prime-item">
-                        <div class="prime-header" onclick="controller.toggleItem('\${name}')">
-                            <span>\${name}</span>
+                        <div class="prime-header" onclick="controller.toggleItem('\${escapedName}')">
+                            <span>\${escapedName}</span>
                             <span>\${state.expandedItems.has(name) ? '▼' : '▶'}</span>
                         </div>
                         <div class="prime-content \${state.expandedItems.has(name) ? 'active' : ''}">
                             <ul class="part-list">
                                 \${groupedParts.map(p => \`
                                     <li class="part-item">
-                                        <span class="rarity-\${p.rarity}">\${p.part}</span>
+                                        <span class="rarity-\${p.rarity}">\${utils.escapeHtml(p.part)}</span>
                                         <span>→</span>
                                         <span class="part-link">
                                             \${p.relics.map(r => \`
                                                 <span class="relic-hover"
-                                                    onmouseover="controller.showRelicPopup('\${r}')"
-                                                    onmouseout="controller.hideRelicPopup()">
-                                                    \${r}
+                                                    onmouseover="controller.showRelicPopup('\${utils.escapeHtml(r)}')"
+                                                    onmouseout="controller.hideRelicPopupWithDelay()">
+                                                    \${utils.escapeHtml(r)}
                                                 </span>
                                             \`).join(' > ')}
                                         </span>
@@ -622,16 +712,16 @@ class HTMLGenerator {
 
                 return filtered.map(([name, info]) => \`
                     <div class="prime-item">
-                        <div class="prime-header" onclick="controller.toggleItem('\${name}')">
-                            <span>\${name}</span>
+                        <div class="prime-header" onclick="controller.toggleItem('\${utils.escapeHtml(name)}')">
+                            <span>\${utils.escapeHtml(name)}</span>
                             <span>\${state.expandedItems.has(name) ? '▼' : '▶'}</span>
                         </div>
                         <div class="prime-content \${state.expandedItems.has(name) ? 'active' : ''}">
-                            <div class="location">Void Location: \${info.location}</div>
+                            <div class="location">Void Location: \${utils.escapeHtml(info.location || 'Unknown')}</div>
                             <ul class="part-list">
-                                \${info.rewards.map(r => \`
+                                \${(info.rewards || []).map(r => \`
                                     <li class="part-item">
-                                        <span class="rarity-\${r.rarity}">\${r.part}</span>
+                                        <span class="rarity-\${r.rarity}">\${utils.escapeHtml(r.part || '')}</span>
                                     </li>
                                 \`).join('')}
                             </ul>
@@ -642,15 +732,15 @@ class HTMLGenerator {
 
             renderRelicPopup(relicName) {
                 const relic = state.data.relics[relicName];
-                if (!relic) return '';
+                if (!relic) return '<p>Relic information not found</p>';
                 
                 return \`
-                    <h3>\${relicName}</h3>
-                    <div class="location">\${relic.location}</div>
+                    <h3>\${utils.escapeHtml(relicName)}</h3>
+                    <div class="location">\${utils.escapeHtml(relic.location || 'Unknown location')}</div>
                     <ul class="part-list">
-                        \${relic.rewards.map(r => \`
+                        \${(relic.rewards || []).map(r => \`
                             <li class="part-item">
-                                <span class="rarity-\${r.rarity}">\${r.part}</span>
+                                <span class="rarity-\${r.rarity}">\${utils.escapeHtml(r.part || '')}</span>
                             </li>
                         \`).join('')}
                     </ul>
@@ -684,15 +774,29 @@ class HTMLGenerator {
                         document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
                         e.target.classList.add('active');
                         state.currentTab = e.target.dataset.tab;
+                        document.getElementById('searchInput').value = '';
                         state.searchTerm = '';
                         state.expandedItems.clear();
+                        this.hideRelicPopup();
                         view.updateDisplay();
                     });
                 });
+                
+                // Hide popup when clicking outside
+                document.addEventListener('click', e => {
+                    if (!e.target.closest('.relic-hover') && !e.target.closest('#relicPopup')) {
+                        this.hideRelicPopup();
+                    }
+                });
 
-                document.addEventListener('mouseover', e => {
-                    if (e.target.closest('.relic-hover')) return;
-                    this.hideRelicPopup();
+                // Prevent popup hiding during mouseover
+                document.getElementById('relicPopup').addEventListener('mouseover', () => {
+                    clearTimeout(this.popupTimeout);
+                    state.relicPopupVisible = true;
+                });
+                
+                document.getElementById('relicPopup').addEventListener('mouseout', () => {
+                    this.hideRelicPopupWithDelay();
                 });
             },
 
@@ -704,14 +808,30 @@ class HTMLGenerator {
             },
 
             showRelicPopup(relicName) {
+                clearTimeout(this.popupTimeout);
+                state.relicPopupVisible = true;
+                
                 const popup = document.getElementById('relicPopup');
                 popup.innerHTML = view.renderRelicPopup(relicName);
                 popup.style.display = 'block';
             },
+            
+            hideRelicPopupWithDelay() {
+                state.relicPopupVisible = false;
+                this.popupTimeout = setTimeout(() => {
+                    if (!state.relicPopupVisible) {
+                        this.hideRelicPopup();
+                    }
+                }, 300);
+            },
 
             hideRelicPopup() {
+                clearTimeout(this.popupTimeout);
+                state.relicPopupVisible = false;
                 document.getElementById('relicPopup').style.display = 'none';
-            }
+            },
+            
+            popupTimeout: null
         };
 
         document.addEventListener('DOMContentLoaded', () => controller.init());
@@ -722,23 +842,46 @@ class HTMLGenerator {
 class WarframeConverter {
     static async convertMarkdownToHTML(inputFile, outputFile) {
         try {
-            const content = await fs.promises.readFile(inputFile, 'utf8');
+            // Resolve paths relative to current directory
+            const inputPath = path.resolve(inputFile);
+            const outputPath = path.resolve(outputFile);
+            
+            console.log(`Converting ${inputPath} to ${outputPath}...`);
+            
+            const content = await fs.promises.readFile(inputPath, 'utf8');
             const parsedData = new WarframeDataParser().parse(content);
             const html = HTMLGenerator.generateHTML(parsedData);
-            await fs.promises.writeFile(outputFile, html);
-            console.log(`Successfully generated ${outputFile}`);
+            
+            await fs.promises.writeFile(outputPath, html);
+            console.log(`Successfully generated ${outputPath}`);
+            
+            return { success: true, message: `Successfully generated ${outputPath}` };
         } catch (error) {
             console.error('Void translation failed:', error);
-            process.exit(1);
+            
+            if (error.code === 'ENOENT') {
+                console.error(`File not found: ${error.path}`);
+            }
+            
+            return { success: false, error: error.message };
         }
     }
 }
 
 if (require.main === module) {
-    WarframeConverter.convertMarkdownToHTML(
-        'currentPrimes.md',
-        'index.html'
-    ).catch(console.error);
+    const inputFile = process.argv[2] || 'currentPrimes.md';
+    const outputFile = process.argv[3] || 'index.html';
+    
+    WarframeConverter.convertMarkdownToHTML(inputFile, outputFile)
+        .then(result => {
+            if (!result.success) {
+                process.exit(1);
+            }
+        })
+        .catch(err => {
+            console.error('Unexpected error:', err);
+            process.exit(1);
+        });
 }
 
 module.exports = {

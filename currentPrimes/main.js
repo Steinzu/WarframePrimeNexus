@@ -2,10 +2,19 @@ import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
 import fs from 'fs';
 
-// Function to fetch and parse the HTML content
+/**
+ * Fetches and parses HTML content from a URL
+ * @param {string} url - The URL to fetch HTML from
+ * @returns {Document|null} - Parsed DOM document or null on failure
+ */
 async function fetchAndParseHTML(url) {
     try {
         const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        
         const htmlContent = await response.text();
         return new JSDOM(htmlContent).window.document;
     } catch (error) {
@@ -14,7 +23,12 @@ async function fetchAndParseHTML(url) {
     }
 }
 
-// Function to find subtable data by title
+/**
+ * Extracts relic names from a subtable
+ * @param {Document} document - The DOM document
+ * @param {string} subTableTitle - The title of the subtable to extract from
+ * @returns {string[]} - Array of relic names
+ */
 function findSubTableData(document, subTableTitle) {
     const tables = document.querySelectorAll('th');
     let targetTableStart = Array.from(tables).find(th => th.textContent.trim() === subTableTitle);
@@ -29,8 +43,9 @@ function findSubTableData(document, subTableTitle) {
     let currentRow = targetTableStart.parentElement.nextElementSibling;
 
     while (currentRow && !currentRow.classList.contains('blank-row')) {
-        if (!currentRow.querySelector('th') && currentRow.querySelector('td').textContent.includes("Relic")) {
-            rows.push(currentRow.querySelector('td').textContent.trim());
+        const tdElement = currentRow.querySelector('td');
+        if (!currentRow.querySelector('th') && tdElement && tdElement.textContent.includes("Relic")) {
+            rows.push(tdElement.textContent.trim());
         }
         currentRow = currentRow.nextElementSibling;
     }
@@ -38,13 +53,19 @@ function findSubTableData(document, subTableTitle) {
     return rows;
 }
 
-// Function to find relic table data
+/**
+ * Extracts reward data for a specific relic
+ * @param {Document} document - The DOM document
+ * @param {string} relicName - The name of the relic to extract rewards from
+ * @returns {Array<{item: string, rarity: string}>} - Array of reward items with their rarity
+ */
 function findRelicTableData(document, relicName) {
     const tables = document.querySelectorAll('th');
-    let targetTableStart = Array.from(tables).find(th => th.textContent.trim() === `${relicName} (Intact)`);
+    const searchName = `${relicName} (Intact)`;
+    let targetTableStart = Array.from(tables).find(th => th.textContent.trim() === searchName);
 
     if (!targetTableStart) {
-        console.error(`Relic table not found: ${relicName} (Intact)`);
+        console.error(`Relic table not found: ${searchName}`);
         return [];
     }
 
@@ -55,9 +76,10 @@ function findRelicTableData(document, relicName) {
     while (currentRow && !currentRow.classList.contains('blank-row')) {
         const cells = currentRow.querySelectorAll('td');
         if (cells.length > 0) {
-            let item = cells[0].textContent.trim();
-            let rarityText = cells[1].textContent.trim();
+            const item = cells[0].textContent.trim();
+            const rarityText = cells[1].textContent.trim();
 
+            // Determine rarity based on drop chance percentage
             let rarity = '';
             if (rarityText.includes('25.33%')) {
                 rarity = 'Common';
@@ -75,17 +97,22 @@ function findRelicTableData(document, relicName) {
     return rows;
 }
 
-// Function to extract data from specific subtables
+/**
+ * Extracts data from multiple subtables and their associated relics
+ * @param {string} url - The URL to fetch data from
+ * @param {string[]} subTableTitles - Array of subtable titles to extract
+ * @returns {Object} - Object containing relic data
+ */
 async function extractSubTableData(url, subTableTitles) {
     const document = await fetchAndParseHTML(url);
     if (!document) return {};
 
-    let results = {};
+    const results = {};
     for (const title of subTableTitles) {
         results[title] = findSubTableData(document, title);
     }
 
-    let relicData = {};
+    const relicData = {};
     for (const subTable in results) {
         for (const relic of results[subTable]) {
             relicData[relic] = findRelicTableData(document, relic);
@@ -95,12 +122,16 @@ async function extractSubTableData(url, subTableTitles) {
     return relicData;
 }
 
-// Function to clean and order relics
+/**
+ * Cleans and sorts the relics in proper order
+ * @param {Object} relicsData - Raw relic data
+ * @returns {string[]} - Sorted array of unique relic names
+ */
 function cleanAndOrderRelics(relicsData) {
-    let relicsSet = new Set();
+    const relicsSet = new Set();
 
     for (const key in relicsData) {
-        relicsData[key].forEach(relic => relicsSet.add(relic.item));
+        relicsData[key].forEach(item => relicsSet.add(item.item));
     }
 
     return Array.from(relicsSet).sort((a, b) => {
@@ -114,9 +145,13 @@ function cleanAndOrderRelics(relicsData) {
     });
 }
 
-// Function to extract complete primes
+/**
+ * Groups relic rewards by prime item
+ * @param {Object} relicData - Relic reward data
+ * @returns {Object} - Grouped prime item data
+ */
 function extractPrimes(relicData) {
-    let primes = {};
+    const primes = {};
 
     for (const relic in relicData) {
         relicData[relic].forEach(({ item, rarity }) => {
@@ -133,7 +168,13 @@ function extractPrimes(relicData) {
     return primes;
 }
 
-// Function to generate Markdown file
+/**
+ * Generates markdown content from the extracted data
+ * @param {Object} primes - Grouped prime item data
+ * @param {Object} relicData - Relic reward data
+ * @param {Object} relicLocations - Mapping of relic tiers to locations
+ * @returns {string} - Generated markdown content
+ */
 function generateMarkdown(primes, relicData, relicLocations) {
     const currentDate = new Date().toLocaleDateString('en-US', {
         year: 'numeric',
@@ -170,20 +211,38 @@ function generateMarkdown(primes, relicData, relicLocations) {
     return markdown;
 }
 
-// Main execution
-const url = 'https://warframe-web-assets.nyc3.cdn.digitaloceanspaces.com/uploads/cms/hnfvc0o3jnfvc873njb03enrf56.html';
-const subTableTitles = ['Void/Hepit (Capture)', 'Void/Ukko (Capture)', 'Lua/Apollo (Disruption)'];
-const relicLocations = {
-    'Lith': 'Void/Hepit (Capture)',
-    'Meso': 'Void/Ukko (Capture)',
-    'Neo': 'Void/Ukko (Capture), Lua/Apollo (Disruption)',
-    'Axi': 'Lua/Apollo (Disruption)'
-};
+/**
+ * Main entry point
+ */
+async function main() {
+    const url = 'https://warframe-web-assets.nyc3.cdn.digitaloceanspaces.com/uploads/cms/hnfvc0o3jnfvc873njb03enrf56.html';
+    const subTableTitles = ['Void/Hepit (Capture)', 'Void/Ukko (Capture)', 'Lua/Apollo (Disruption)'];
+    const relicLocations = {
+        'Lith': 'Void/Hepit (Capture)',
+        'Meso': 'Void/Ukko (Capture)',
+        'Neo': 'Void/Ukko (Capture), Lua/Apollo (Disruption)',
+        'Axi': 'Lua/Apollo (Disruption)'
+    };
 
-extractSubTableData(url, subTableTitles).then(data => {
-    const cleanRelics = cleanAndOrderRelics(data);
-    const primes = extractPrimes(data);
-    const markdownContent = generateMarkdown(primes, data, relicLocations);
-    fs.writeFileSync('currentPrimes.md', markdownContent);
-    console.log('Markdown file has been generated as currentPrimes.md');
-});
+    try {
+        console.log('Fetching Warframe relic data...');
+        const data = await extractSubTableData(url, subTableTitles);
+        
+        if (Object.keys(data).length === 0) {
+            throw new Error('No relic data found');
+        }
+        
+        const cleanRelics = cleanAndOrderRelics(data);
+        const primes = extractPrimes(data);
+        const markdownContent = generateMarkdown(primes, data, relicLocations);
+        
+        fs.writeFileSync('currentPrimes.md', markdownContent);
+        console.log('Markdown file has been generated as currentPrimes.md');
+    } catch (error) {
+        console.error('Error generating markdown:', error);
+        process.exit(1);
+    }
+}
+
+// Execute the main function
+main();
