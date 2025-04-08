@@ -21,12 +21,10 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
 
       - name: Install dependencies for currentPrimes
         working-directory: ./currentPrimes
-        run: npm ci
+        run: npm install
 
       - name: Generate markdown file
         working-directory: ./currentPrimes
@@ -37,16 +35,17 @@ jobs:
 
       - name: Install dependencies for htmlConverter
         working-directory: ./htmlConverter
-        run: npm ci
+        run: npm install
 
       - name: Generate HTML file
         working-directory: ./htmlConverter
         run: node htmlConverter.js
 
-      - name: Copy HTML to docs directory
+      - name: Setup docs directory
         run: |
           mkdir -p docs
           cp ./htmlConverter/index.html ./docs/
+          touch ./docs/.nojekyll  # Create .nojekyll file to disable Jekyll processing
           
       - name: Commit and push if changed
         run: |
@@ -65,4 +64,5 @@ jobs:
           path: './docs'
           
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v2
