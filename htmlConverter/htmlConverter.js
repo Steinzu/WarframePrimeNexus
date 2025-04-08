@@ -128,7 +128,7 @@ class HTMLGenerator {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="https://i.imgur.com/DTf1jQO.png">
-    <title>Void Prime Nexus</title>
+    <title>Warframe Prime Nexus</title>
     ${this.getStyles()}
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Exo+2:wght@300;500;700&display=swap" rel="stylesheet">
 </head>
@@ -468,7 +468,7 @@ class HTMLGenerator {
         return `
         <div class="container">
             <div class="header">
-                <h1>Void Prime Nexus</h1>
+                <h1>Warframe Prime Nexus</h1>
                 <p>Prime Tracking by Steins</p>
             </div>
 
