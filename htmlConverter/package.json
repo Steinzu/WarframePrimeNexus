@@ -1,0 +1,10 @@
+{
+    "name": "html-converter",
+    "version": "1.0.0",
+    "description": "Converts Warframe prime data from markdown to HTML",
+    "main": "htmlConverter.js",
+    "scripts": {
+      "start": "node htmlConverter.js"
+    },
+    "dependencies": {}
+  }
